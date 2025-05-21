@@ -27,13 +27,17 @@ ice_servers = [
 config = RTCConfiguration(iceServers=ice_servers)
 INFERENCE_SERVER_URL = "ws://localhost:8003/predict"
 
+
 @app.post("/connect-camera")
 async def connect_camera(camera: CameraConnectionRequest):
     if camera.camera_name not in camera_streams:
-        start_camera_stream(camera.camera_name, camera.rtsp_url, camera_streams)
+        start_camera_stream(camera.camera_name,
+                            camera.rtsp_url, camera_streams)
         camera_registry[camera.camera_name] = camera.rtsp_url
-        print(f"✅ Cámara registrada: {camera.camera_name} -> {camera.rtsp_url}")
+        print(
+            f"✅ Cámara registrada: {camera.camera_name} -> {camera.rtsp_url}")
     return {"message": "Camera registered successfully."}
+
 
 @app.post("/negotiate")
 async def negotiate_webrtc(data: SDPRequest):
@@ -45,7 +49,11 @@ async def negotiate_webrtc(data: SDPRequest):
     pc = RTCPeerConnection(configuration=config)
     pcs.add(pc)
 
-    video_track = get_video_track(camera_name, camera_streams, INFERENCE_SERVER_URL)
+    # 1) Creamos un DataChannel para detecciones
+    detections_dc: RTCDataChannel = pc.createDataChannel("detections")
+
+    video_track = get_video_track(
+        camera_name, camera_streams, INFERENCE_SERVER_URL, detections_dc)
     pc.addTrack(video_track)
 
     @pc.on("connectionstatechange")
@@ -67,4 +75,3 @@ async def negotiate_webrtc(data: SDPRequest):
         "sdp": pc.localDescription.sdp,
         "type": pc.localDescription.type
     }
-

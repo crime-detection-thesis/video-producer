@@ -1,13 +1,12 @@
 import cv2
 import threading
 import time
-
-import numpy as np
-from aiortc import VideoStreamTrack
-from av import VideoFrame
 import asyncio
 import websockets
 import json
+import numpy as np
+from aiortc import VideoStreamTrack, RTCDataChannel
+from av import VideoFrame
 from collections import defaultdict
 
 camera_viewers = defaultdict(int)
@@ -53,11 +52,12 @@ class SharedCameraStream:
 
 
 class CameraVideoTrack(VideoStreamTrack):
-    def __init__(self, shared_stream: SharedCameraStream, camera_name: str, inference_server_url: str):
+    def __init__(self, shared_stream: SharedCameraStream, camera_name: str, inference_server_url: str, data_channel: RTCDataChannel):
         super().__init__()
         self.shared_stream = shared_stream
         self.camera_name = camera_name
         self.inference_server_url = inference_server_url
+        self.data_channel = data_channel
         camera_viewers[camera_name] += 1
         print(
             f"👤 Nuevo viewer para {camera_name}: {camera_viewers[camera_name]}")
@@ -119,6 +119,15 @@ class CameraVideoTrack(VideoStreamTrack):
             return await self.recv()
 
         labels_and_boxes = await self.send_frame_to_inference(frame)
+        print(labels_and_boxes)
+
+        # 3) Enviar detecciones por el DataChannel
+        if labels_and_boxes and self.data_channel.readyState == "open":
+            try:
+                self.data_channel.send(json.dumps(
+                    {"detections": labels_and_boxes}))
+            except Exception:
+                pass
 
         if labels_and_boxes:
             frame_with_boxes = self.draw_bounding_boxes(
@@ -172,6 +181,6 @@ def stop_camera_stream(camera_name):
     print(f"🗑️ Recursos liberados para {camera_name}")
 
 
-def get_video_track(camera_name, stream_registry, inference_server_url):
+def get_video_track(camera_name, stream_registry, inference_server_url, data_channel):
     shared_stream, _ = stream_registry[camera_name]
-    return CameraVideoTrack(shared_stream, camera_name, inference_server_url)
+    return CameraVideoTrack(shared_stream, camera_name, inference_server_url, data_channel)
