@@ -12,6 +12,7 @@ from collections import defaultdict
 
 camera_viewers = defaultdict(int)
 
+
 class SharedCameraStream:
     def __init__(self, rtsp_url):
         self.rtsp_url = rtsp_url
@@ -50,6 +51,7 @@ class SharedCameraStream:
     def stop(self):
         self.running = False
 
+
 class CameraVideoTrack(VideoStreamTrack):
     def __init__(self, shared_stream: SharedCameraStream, camera_name: str, inference_server_url: str):
         super().__init__()
@@ -57,7 +59,8 @@ class CameraVideoTrack(VideoStreamTrack):
         self.camera_name = camera_name
         self.inference_server_url = inference_server_url
         camera_viewers[camera_name] += 1
-        print(f"👤 Nuevo viewer para {camera_name}: {camera_viewers[camera_name]}")
+        print(
+            f"👤 Nuevo viewer para {camera_name}: {camera_viewers[camera_name]}")
         self.websocket = None
 
     async def send_frame_to_inference(self, frame: np.ndarray):
@@ -66,11 +69,13 @@ class CameraVideoTrack(VideoStreamTrack):
                 print('🔌 Conectando al servidor de inferencia...')
                 self.websocket = await websockets.connect(self.inference_server_url)
             except websockets.exceptions.WebSocketException as e:
-                print(f"⚠️ Error al conectar con el servidor de inferencia: {e}")
+                print(
+                    f"⚠️ Error al conectar con el servidor de inferencia: {e}")
                 self.websocket = None
                 return None
             except Exception as e:
-                print(f"⚠️ Error inesperado al conectar con el servidor de inferencia: {e}")
+                print(
+                    f"⚠️ Error inesperado al conectar con el servidor de inferencia: {e}")
                 self.websocket = None
                 return None
 
@@ -90,7 +95,8 @@ class CameraVideoTrack(VideoStreamTrack):
                 return None
 
         except Exception as e:
-            print(f"⚠️ Error en la comunicación WebSocket con el servidor de inferencia: {e}")
+            print(
+                f"⚠️ Error en la comunicación WebSocket con el servidor de inferencia: {e}")
             if self.websocket:
                 self.websocket.close()
             return None
@@ -101,10 +107,12 @@ class CameraVideoTrack(VideoStreamTrack):
 
         with self.shared_stream.lock:
             if self.shared_stream.finished:
-                print(f"⚠️ Stream finalizado para {self.camera_name}, no se envía más video")
+                print(
+                    f"⚠️ Stream finalizado para {self.camera_name}, no se envía más video")
                 raise asyncio.CancelledError("Stream finalizado")
 
-            frame = self.shared_stream.latest_frame.copy() if self.shared_stream.latest_frame is not None else None
+            frame = self.shared_stream.latest_frame.copy(
+            ) if self.shared_stream.latest_frame is not None else None
 
         if frame is None:
             await asyncio.sleep(0.1)
@@ -113,7 +121,8 @@ class CameraVideoTrack(VideoStreamTrack):
         labels_and_boxes = await self.send_frame_to_inference(frame)
 
         if labels_and_boxes:
-            frame_with_boxes = self.draw_bounding_boxes(frame, labels_and_boxes)
+            frame_with_boxes = self.draw_bounding_boxes(
+                frame, labels_and_boxes)
         else:
             frame_with_boxes = frame
 
@@ -127,19 +136,22 @@ class CameraVideoTrack(VideoStreamTrack):
         if labels_and_boxes:
             for detection in labels_and_boxes['detections']:
                 x1, y1, x2, y2 = detection['box']
-                label = f'{detection['label']} ({detection['confidence'] * 100:.1f}%)'
+                label = f"{detection['label']} ({detection['confidence'] * 100:.1f}%)"
                 color = (255, 0, 0)
                 thickness = 2
                 cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
-                cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
+                cv2.putText(frame, label, (x1, y1 - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
         return frame
 
     async def stop(self):
         camera_viewers[self.camera_name] -= 1
-        print(f"👁️‍🗨️ Viewers restantes para {self.camera_name}: {camera_viewers[self.camera_name]}")
+        print(
+            f"👁️‍🗨️ Viewers restantes para {self.camera_name}: {camera_viewers[self.camera_name]}")
         if camera_viewers[self.camera_name] <= 0:
             stop_camera_stream(self.camera_name)
             del camera_viewers[self.camera_name]
+
 
 def start_camera_stream(camera_name, rtsp_url, stream_registry):
     shared_stream = SharedCameraStream(rtsp_url)
