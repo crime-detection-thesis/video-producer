@@ -1,9 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration, RTCIceServer
+from app.constants import INFERENCE_SERVER_URL
 
 from schemas import CameraConnectionRequest, SDPRequest
-from video_stream import get_video_track, start_camera_stream
+from .video_stream import get_video_track, start_camera_stream
 app = FastAPI()
 camera_registry = {}
 camera_streams = {}
@@ -25,7 +26,6 @@ ice_servers = [
     ),
 ]
 config = RTCConfiguration(iceServers=ice_servers)
-INFERENCE_SERVER_URL = "ws://localhost:8003/predict"
 
 @app.post("/connect-camera")
 async def connect_camera(camera: CameraConnectionRequest):
@@ -55,7 +55,7 @@ async def negotiate_webrtc(data: SDPRequest):
             print(f"❌ Conexión cerrada para {camera_name}")
             await pc.close()
             pcs.discard(pc)
-            await video_track.stop()
+            await video_track.stop(camera_streams, camera_registry)
 
     await pc.setRemoteDescription(offer)
     answer = await pc.createAnswer()

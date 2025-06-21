@@ -9,13 +9,18 @@ import asyncio
 import websockets
 import json
 from collections import defaultdict
+# from app.main import camera_streams, camera_registry
+
+import os
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
 
 camera_viewers = defaultdict(int)
 
 class SharedCameraStream:
     def __init__(self, rtsp_url):
         self.rtsp_url = rtsp_url
-        self.cap = cv2.VideoCapture(rtsp_url)
+        # self.cap = cv2.VideoCapture(rtsp_url)
+        self.cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
         if not self.cap.isOpened():
             raise RuntimeError(f"❌ No se pudo abrir RTSP: {rtsp_url}")
         self.latest_frame = None
@@ -127,18 +132,18 @@ class CameraVideoTrack(VideoStreamTrack):
         if labels_and_boxes:
             for detection in labels_and_boxes['detections']:
                 x1, y1, x2, y2 = detection['box']
-                label = f'{detection['label']} ({detection['confidence'] * 100:.1f}%)'
+                label = f'{detection["label"]} ({detection["confidence"] * 100:.1f}%)'
                 color = (255, 0, 0)
                 thickness = 2
                 cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
                 cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
         return frame
 
-    async def stop(self):
+    async def stop(self, camera_streams, camera_registry):
         camera_viewers[self.camera_name] -= 1
         print(f"👁️‍🗨️ Viewers restantes para {self.camera_name}: {camera_viewers[self.camera_name]}")
         if camera_viewers[self.camera_name] <= 0:
-            stop_camera_stream(self.camera_name)
+            stop_camera_stream(self.camera_name, camera_streams, camera_registry)
             del camera_viewers[self.camera_name]
 
 def start_camera_stream(camera_name, rtsp_url, stream_registry):
@@ -149,8 +154,7 @@ def start_camera_stream(camera_name, rtsp_url, stream_registry):
     print(f"🧵 Hilo iniciado para {camera_name}")
 
 
-def stop_camera_stream(camera_name):
-    from main import camera_streams, camera_registry
+def stop_camera_stream(camera_name, camera_streams, camera_registry):
     if camera_name in camera_streams:
         shared_stream, thread = camera_streams[camera_name]
         shared_stream.stop()
