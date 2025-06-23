@@ -1,8 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration, RTCIceServer
-from video_stream import get_video_track, start_camera_stream
+from app.constants import INFERENCE_SERVER_URL
+
+from schemas import CameraConnectionRequest, SDPRequest
+from .video_stream import get_video_track, start_camera_stream
 app = FastAPI()
 camera_registry = {}
 camera_streams = {}
@@ -25,15 +27,6 @@ ice_servers = [
 ]
 config = RTCConfiguration(iceServers=ice_servers)
 
-class CameraConnectionRequest(BaseModel):
-    camera_name: str
-    rtsp_url: str
-
-class SDPRequest(BaseModel):
-    camera_name: str
-    sdp: str
-    type: str
-
 @app.post("/connect-camera")
 async def connect_camera(camera: CameraConnectionRequest):
     if camera.camera_name not in camera_streams:
@@ -52,8 +45,7 @@ async def negotiate_webrtc(data: SDPRequest):
     pc = RTCPeerConnection(configuration=config)
     pcs.add(pc)
 
-    video_track = get_video_track(camera_name, camera_streams)
-
+    video_track = get_video_track(camera_name, camera_streams, INFERENCE_SERVER_URL)
     pc.addTrack(video_track)
 
     @pc.on("connectionstatechange")
@@ -63,7 +55,7 @@ async def negotiate_webrtc(data: SDPRequest):
             print(f"❌ Conexión cerrada para {camera_name}")
             await pc.close()
             pcs.discard(pc)
-            await video_track.stop()
+            await video_track.stop(camera_streams, camera_registry)
 
     await pc.setRemoteDescription(offer)
     answer = await pc.createAnswer()
