@@ -69,7 +69,7 @@ class CameraVideoTrack(VideoStreamTrack):
         if not self.websocket:
             try:
                 print('🔌 Conectando al servidor de inferencia...')
-                self.websocket = await websockets.connect(self.inference_server_url)
+                self.websocket = await websockets.connect(f'ws://{self.inference_server_url}/predict')
             except websockets.exceptions.WebSocketException as e:
                 print(f"⚠️ Error al conectar con el servidor de inferencia: {e}")
                 self.websocket = None
