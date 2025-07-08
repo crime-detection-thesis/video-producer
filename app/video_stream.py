@@ -9,7 +9,7 @@ import asyncio
 import websockets
 import json
 from collections import defaultdict
-# from app.main import camera_streams, camera_registry
+from fastapi import WebSocket
 
 import os
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
@@ -56,20 +56,26 @@ class SharedCameraStream:
         self.running = False
 
 class CameraVideoTrack(VideoStreamTrack):
-    def __init__(self, shared_stream: SharedCameraStream, camera_name: str, inference_server_url: str):
+    def __init__(self, shared_stream: SharedCameraStream, camera_id: int, inference_server_url: str, user_id: int, signal_ws: WebSocket):
         super().__init__()
         self.shared_stream = shared_stream
-        self.camera_name = camera_name
-        self.inference_server_url = inference_server_url
-        camera_viewers[camera_name] += 1
-        print(f"👤 Nuevo viewer para {camera_name}: {camera_viewers[camera_name]}")
+        self.camera_id = camera_id
+        self.user_id = user_id
+        self.inference_server_url = f'ws://{inference_server_url}/predict/{camera_id}'
+        self.signal_ws = signal_ws
+        camera_viewers[camera_id] += 1
+        print(f"👤 Nuevo viewer para {camera_id}: {camera_viewers[camera_id]}")
         self.websocket = None
 
     async def send_frame_to_inference(self, frame: np.ndarray):
         if not self.websocket:
             try:
                 print('🔌 Conectando al servidor de inferencia...')
-                self.websocket = await websockets.connect(f'ws://{self.inference_server_url}/predict')
+                self.websocket = await websockets.connect(self.inference_server_url)
+                init_msg = json.dumps({
+                    "user_id": self.user_id,
+                })
+                await self.websocket.send(init_msg)
             except websockets.exceptions.WebSocketException as e:
                 print(f"⚠️ Error al conectar con el servidor de inferencia: {e}")
                 self.websocket = None
@@ -106,7 +112,7 @@ class CameraVideoTrack(VideoStreamTrack):
 
         with self.shared_stream.lock:
             if self.shared_stream.finished:
-                print(f"⚠️ Stream finalizado para {self.camera_name}, no se envía más video")
+                print(f"⚠️ Stream finalizado para {self.camera_id}, no se envía más video")
                 raise asyncio.CancelledError("Stream finalizado")
 
             frame = self.shared_stream.latest_frame.copy() if self.shared_stream.latest_frame is not None else None
@@ -117,7 +123,16 @@ class CameraVideoTrack(VideoStreamTrack):
 
         labels_and_boxes = await self.send_frame_to_inference(frame)
 
-        if labels_and_boxes:
+        if labels_and_boxes["detections"]:
+            print('✅ Detección detectada')
+            try:
+                await self.signal_ws.send_json({
+                    "event": "detection",
+                    "camera_id": self.camera_id,
+                })
+            except Exception as e:
+                print(f"⚠️ Error al enviar detección al cliente: {e}")
+
             frame_with_boxes = self.draw_bounding_boxes(frame, labels_and_boxes)
         else:
             frame_with_boxes = frame
@@ -129,7 +144,7 @@ class CameraVideoTrack(VideoStreamTrack):
         return av_frame
 
     def draw_bounding_boxes(self, frame: np.ndarray, labels_and_boxes):
-        if labels_and_boxes:
+        if labels_and_boxes["detections"]:
             for detection in labels_and_boxes['detections']:
                 x1, y1, x2, y2 = detection['box']
                 label = f'{detection["label"]} ({detection["confidence"] * 100:.1f}%)'
@@ -140,30 +155,47 @@ class CameraVideoTrack(VideoStreamTrack):
         return frame
 
     async def stop(self, camera_streams, camera_registry):
-        camera_viewers[self.camera_name] -= 1
-        print(f"👁️‍🗨️ Viewers restantes para {self.camera_name}: {camera_viewers[self.camera_name]}")
-        if camera_viewers[self.camera_name] <= 0:
-            stop_camera_stream(self.camera_name, camera_streams, camera_registry)
-            del camera_viewers[self.camera_name]
+        print(f"🔌 Closing video track for camera {self.camera_id} stop")
+        if self.websocket:
+            try:
+                print(f"🔌 Closing video track for camera {self.camera_id} websocket stop")
+                await self.websocket.close()
+            except Exception:
+                pass
+        
+        if camera_viewers[self.camera_id] > 0:
+            print(f"🔌 Closing video track for camera {self.camera_id} viewer stop")
+            camera_viewers[self.camera_id] -= 1
+            print(f" Viewers restantes para {self.camera_id}: {camera_viewers[self.camera_id]}")
+            if camera_viewers[self.camera_id] == 0:
+                print(f"🔌 Closing video track for camera {self.camera_id} viewer stop final")
+                stop_camera_stream(self.camera_id, camera_streams, camera_registry)
+                del camera_viewers[self.camera_id]
 
-def start_camera_stream(camera_name, rtsp_url, stream_registry):
-    shared_stream = SharedCameraStream(rtsp_url)
-    t = threading.Thread(target=shared_stream.update, daemon=True)
-    t.start()
-    stream_registry[camera_name] = (shared_stream, t)
-    print(f"🧵 Hilo iniciado para {camera_name}")
+def start_camera_stream(camera_id, rtsp_url, stream_registry):
+    try:
+        shared_stream = SharedCameraStream(rtsp_url)
+        t = threading.Thread(target=shared_stream.update, daemon=True)
+        t.start()
+        stream_registry[camera_id] = (shared_stream, t)
+        print(f"✅ Hilo iniciado para {camera_id}")
+        return True
+    except Exception as e:
+        print(f"❌ Error al iniciar cámara {camera_id}: {e}")
+        if camera_id in stream_registry:
+            del stream_registry[camera_id]
+        return False
 
-
-def stop_camera_stream(camera_name, camera_streams, camera_registry):
-    if camera_name in camera_streams:
-        shared_stream, thread = camera_streams[camera_name]
+def stop_camera_stream(camera_id, camera_streams, camera_registry):
+    if camera_id in camera_streams:
+        shared_stream, thread = camera_streams[camera_id]
         shared_stream.stop()
-        del camera_streams[camera_name]
-    if camera_name in camera_registry:
-        del camera_registry[camera_name]
-    print(f"🗑️ Recursos liberados para {camera_name}")
+        del camera_streams[camera_id]
+    if camera_id in camera_registry:
+        del camera_registry[camera_id]
+    print(f" Recursos liberados para {camera_id}")
 
 
-def get_video_track(camera_name, stream_registry, inference_server_url):
-    shared_stream, _ = stream_registry[camera_name]
-    return CameraVideoTrack(shared_stream, camera_name, inference_server_url)
+def get_video_track(camera_id, stream_registry, inference_server_url, user_id, signal_ws):
+    shared_stream, _ = stream_registry[camera_id]
+    return CameraVideoTrack(shared_stream, camera_id, inference_server_url, user_id, signal_ws)
