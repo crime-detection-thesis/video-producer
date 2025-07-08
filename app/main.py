@@ -1,11 +1,21 @@
-from fastapi import FastAPI
+import json
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from aiortc import RTCPeerConnection, RTCSessionDescription, RTCConfiguration, RTCIceServer
+from aiortc import (
+    RTCPeerConnection,
+    RTCSessionDescription,
+    RTCConfiguration,
+    RTCIceServer,
+)
+from app.schemas import CameraConnectionRequest
+from app.video_stream import get_video_track, start_camera_stream
 from app.constants import INFERENCE_SERVER_URL
+from fastapi import HTTPException
+import cv2
 
-from schemas import CameraConnectionRequest, SDPRequest
-from .video_stream import get_video_track, start_camera_stream
+
 app = FastAPI()
+
 camera_registry = {}
 camera_streams = {}
 pcs = set()
@@ -18,53 +28,190 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# STUN + TURN servers (coincide con el cliente)
 ice_servers = [
+    RTCIceServer(urls="stun:stun.l.google.com:19302"),
     RTCIceServer(
         urls="turn:openrelay.metered.ca:80",
         username="openrelayproject",
-        credential="openrelayproject"
+        credential="openrelayproject",
     ),
 ]
 config = RTCConfiguration(iceServers=ice_servers)
 
 @app.post("/connect-camera")
-async def connect_camera(camera: CameraConnectionRequest):
-    if camera.camera_name not in camera_streams:
-        start_camera_stream(camera.camera_name, camera.rtsp_url, camera_streams)
-        camera_registry[camera.camera_name] = camera.rtsp_url
-        print(f"✅ Cámara registrada: {camera.camera_name} -> {camera.rtsp_url}")
-    return {"message": "Camera registered successfully."}
+async def connect_camera(request: CameraConnectionRequest):
+    camera_id = request.camera_id
+    rtsp_url  = request.rtsp_url
 
-@app.post("/negotiate")
-async def negotiate_webrtc(data: SDPRequest):
-    camera_name = data.camera_name
-    if camera_name not in camera_streams:
-        return {"error": "Camera not registered or not started."}
+    if camera_id in camera_streams:
+        return {"status": "already_running"}
 
-    offer = RTCSessionDescription(sdp=data.sdp, type=data.type)
+    cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
+    if not cap.isOpened():
+        cap.release()
+        raise HTTPException(
+            status_code=400,
+            detail="No se pudo conectar a la cámara: URL RTSP inválida o inaccesible."
+        )
+    cap.release()
+
+    start_camera_stream(camera_id, rtsp_url, camera_streams)
+    camera_registry[camera_id] = rtsp_url
+    return {"status": "started", "camera_id": camera_id}
+
+
+@app.websocket("/ws/{camera_id}")
+async def signaling_ws(websocket: WebSocket, camera_id: int):
+    await websocket.accept()
+
+    if camera_id not in camera_streams:
+        await websocket.send_json({"error": "Error al conectar la cámara"})
+        await websocket.close(code=4404)
+        return
+
+    try:
+        init = await websocket.receive_json()
+    except Exception:
+        await websocket.close(code=4001)
+        return
+
+    user_id = init.get("user_id")
+    sdp     = init.get("sdp")
+    typ     = init.get("type")
+    if not user_id or not sdp or typ != "offer":
+        # mal formato
+        await websocket.close(code=4002)
+        return
+    
     pc = RTCPeerConnection(configuration=config)
-    pcs.add(pc)
-
-    video_track = get_video_track(camera_name, camera_streams, INFERENCE_SERVER_URL)
+    video_track = get_video_track(
+        camera_id,
+        camera_streams,
+        INFERENCE_SERVER_URL,
+        user_id,
+        websocket
+    )
     pc.addTrack(video_track)
 
-    @pc.on("connectionstatechange")
-    async def on_connectionstatechange():
-        print(f"📡 Estado conexión {camera_name}: {pc.connectionState}")
-        if pc.connectionState in ["failed", "closed", "disconnected"]:
-            print(f"❌ Conexión cerrada para {camera_name}")
+    # 4) Maneja la SDP offer inicial
+    try:
+        await pc.setRemoteDescription(RTCSessionDescription(sdp=sdp, type=typ))
+        answer = await pc.createAnswer()
+        await pc.setLocalDescription(answer)
+        await websocket.send_json({
+            "sdp": pc.localDescription.sdp,
+            "type": pc.localDescription.type
+        })
+    except Exception as e:
+        print(f"Error en SDP handshake: {e}")
+        await websocket.close(code=1011)
+        return
+
+    # ⇢ 1. Reenvía tus propios ICE candidates al navegador
+    @pc.on("icecandidate")
+    async def on_icecandidate(event):
+        if event.candidate:
+            try:
+                await websocket.send_json({"candidate": event.candidate.__dict__})
+            except Exception as e:
+                print(f"Error sending ICE candidate: {e}")
+
+    # ⇢ 2. Handle msgs from front
+    try:
+        while True:
+            try:
+                data = await websocket.receive_json()
+
+                # ── Detectar la señal de cierre del signaling-server ──
+                if isinstance(data, dict) and data.get("type") == "bye":
+                    print(f"🔌 Received bye for camera {camera_id}, closing signaling loop")
+                    
+
+                    break
+
+                # offer
+                if data.get("sdp") and data.get("type") == "offer":
+                    try:
+                        await pc.setRemoteDescription(
+                            RTCSessionDescription(sdp=data["sdp"], type=data["type"])
+                        )
+                        answer = await pc.createAnswer()
+                        await pc.setLocalDescription(answer)
+                        await websocket.send_json({
+                            "sdp": pc.localDescription.sdp,
+                            "type": pc.localDescription.type
+                        })
+                        print(f"🎥 Answer enviado para cámara {camera_id}")
+                    except Exception as e:
+                        print(f"Error handling SDP offer: {e}")
+
+                # remote candidate
+                elif data.get("candidate"):
+                    cand = data["candidate"]
+                    print(f"Received ICE candidate: {cand}")
+
+                    try:
+                        # Crear objeto ICE candidate compatible con aiortc
+                        ice_candidate = {
+                            "candidate": cand["candidate"],
+                            "sdpMid": cand.get("sdpMid", "0"),
+                            "sdpMLineIndex": cand.get("sdpMLineIndex", 0)
+                        }
+                        
+                        await pc.addIceCandidate(ice_candidate)
+                        print(f"✅ ICE candidate added successfully")
+                        
+                    except Exception as e:
+                        print(f"⚠️ Could not add ICE candidate (continuing anyway): {e}")
+
+                # bye
+                elif isinstance(data, str) and data.strip().lower() == "bye":
+                    break
+
+            except json.JSONDecodeError:
+                print(f"Invalid JSON received from client for camera {camera_id}")
+                continue
+
+    except WebSocketDisconnect:
+        print(f"WebSocket disconnected for camera {camera_id}")
+    except Exception as e:
+        print(f"WebSocket error for camera {camera_id}: {e}")
+    finally:
+        print(f"🔌 Closing video track for camera {camera_id} finally")
+        # try:
+        #     if pc.connectionState != "closed":
+        #         print(f"🔌 Closing RTCPeerConnection for camera {camera_id}")
+        #         await pc.close()
+        #     if video_track:
+        #         print(f"🔌 Closing video track for camera {camera_id}")
+        #         await video_track.stop(camera_streams, camera_registry)
+        #     if websocket.client_state != WebSocketState.DISCONNECTED:
+        #         print(f"🔌 Closing WebSocket for camera {camera_id}")
+        #         await websocket.close()
+        # except Exception as e:
+        #     print(f"Error during cleanup for camera {camera_id}: {e}")
+        # print(f"🔌 WebSocket connection closed for camera {camera_id}")
+
+        # 1️⃣ Cerrar RTCPeerConnection
+        try:
+            print(f"🔌 Closing RTCPeerConnection for camera {camera_id}")
             await pc.close()
-            pcs.discard(pc)
+        except Exception as e:
+            print(f"Error closing RTCPeerConnection: {e}")
+
+        # 2️⃣ Detener VideoTrack (cierra inferencia y libera hilo)
+        try:
+            print(f"🔌 Stopping video track for camera {camera_id}")
             await video_track.stop(camera_streams, camera_registry)
+        except Exception as e:
+            print(f"Error stopping video track: {e}")
 
-    await pc.setRemoteDescription(offer)
-    answer = await pc.createAnswer()
-    await pc.setLocalDescription(answer)
+        # 3️⃣ Cerrar WebSocket de señalización
+        try:
+            print(f"🔌 Closing signaling WebSocket for camera {camera_id}")
+            await websocket.close()
+        except Exception as e:
+            print(f"Error closing signaling WebSocket: {e}")
 
-    print(f"🎥 Transmisión creada: {camera_name}")
-
-    return {
-        "sdp": pc.localDescription.sdp,
-        "type": pc.localDescription.type
-    }
-
+        print(f"🔌 WebSocket connection closed for camera {camera_id}")
