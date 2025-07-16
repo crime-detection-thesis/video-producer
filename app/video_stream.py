@@ -130,14 +130,12 @@ class CameraVideoTrack(VideoStreamTrack):
             _, jpg = cv2.imencode(".jpg", frame)
             frame_bytes = jpg.tobytes()
 
-            max_conf = max(d["confidence"] for d in labels_and_boxes["detections"])
-
             await buffer_frame(
                 self.camera_id,
                 self.user_id,
                 frame_bytes,
                 labels_and_boxes["detections"],
-                max_conf,
+                labels_and_boxes["max_conf"]
             )
 
             try:
