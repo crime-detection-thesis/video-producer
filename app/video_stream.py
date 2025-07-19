@@ -1,15 +1,16 @@
 import cv2
 import threading
 import time
+import asyncio
 
 import numpy as np
 from aiortc import VideoStreamTrack
 from av import VideoFrame
-import asyncio
 import websockets
 import json
 from collections import defaultdict
 from fastapi import WebSocket
+from app.incident_buffer import buffer_frame
 
 import os
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
@@ -125,6 +126,18 @@ class CameraVideoTrack(VideoStreamTrack):
 
         if labels_and_boxes["detections"]:
             print('✅ Detección detectada')
+
+            _, jpg = cv2.imencode(".jpg", frame)
+            frame_bytes = jpg.tobytes()
+
+            await buffer_frame(
+                self.camera_id,
+                self.user_id,
+                frame_bytes,
+                labels_and_boxes["detections"],
+                labels_and_boxes["max_conf"]
+            )
+
             try:
                 await self.signal_ws.send_json({
                     "event": "detection",
@@ -137,8 +150,8 @@ class CameraVideoTrack(VideoStreamTrack):
         else:
             frame_with_boxes = frame
 
-        frame = cv2.cvtColor(frame_with_boxes, cv2.COLOR_BGR2RGB)
-        av_frame = VideoFrame.from_ndarray(frame, format="rgb24")
+        rgb_frame = cv2.cvtColor(frame_with_boxes, cv2.COLOR_BGR2RGB)
+        av_frame = VideoFrame.from_ndarray(rgb_frame, format="rgb24")
         av_frame.pts = pts
         av_frame.time_base = time_base
         return av_frame
