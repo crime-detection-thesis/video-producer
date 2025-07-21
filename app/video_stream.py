@@ -112,11 +112,11 @@ class CameraVideoTrack(VideoStreamTrack):
         await asyncio.sleep(0.03)
 
         with self.shared_stream.lock:
-            if self.shared_stream.finished:
+            if self.shared_stream.finished or self.shared_stream.latest_frame is None:
                 print(f"⚠️ Stream finalizado para {self.camera_id}, no se envía más video")
                 raise asyncio.CancelledError("Stream finalizado")
 
-            frame = self.shared_stream.latest_frame.copy() if self.shared_stream.latest_frame is not None else None
+            frame = self.shared_stream.latest_frame.copy()
 
         if frame is None:
             await asyncio.sleep(0.1)
@@ -182,7 +182,7 @@ class CameraVideoTrack(VideoStreamTrack):
             print(f" Viewers restantes para {self.camera_id}: {camera_viewers[self.camera_id]}")
             if camera_viewers[self.camera_id] == 0:
                 print(f"🔌 Closing video track for camera {self.camera_id} viewer stop final")
-                stop_camera_stream(self.camera_id, camera_streams, camera_registry)
+                await stop_camera_stream(self.camera_id, camera_streams, camera_registry)
                 del camera_viewers[self.camera_id]
 
 def start_camera_stream(camera_id, rtsp_url, stream_registry):
@@ -199,14 +199,21 @@ def start_camera_stream(camera_id, rtsp_url, stream_registry):
             del stream_registry[camera_id]
         return False
 
-def stop_camera_stream(camera_id, camera_streams, camera_registry):
+async def stop_camera_stream(camera_id, camera_streams, camera_registry):
+    print(f"🔌 stop_camera_stream Closing camera stream for camera {camera_id}")
     if camera_id in camera_streams:
         shared_stream, thread = camera_streams[camera_id]
         shared_stream.stop()
+        
+        while thread.is_alive():
+            await asyncio.sleep(0.1)
+
         del camera_streams[camera_id]
+
     if camera_id in camera_registry:
         del camera_registry[camera_id]
-    print(f" Recursos liberados para {camera_id}")
+
+    print(f"🔌 stop_camera_stream Recursos liberados para {camera_id}")
 
 
 def get_video_track(camera_id, stream_registry, inference_server_url, user_id, signal_ws):

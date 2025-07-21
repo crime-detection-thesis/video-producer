@@ -28,7 +28,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# STUN + TURN servers (coincide con el cliente)
 ice_servers = [
     RTCIceServer(urls="stun:stun.l.google.com:19302"),
     RTCIceServer(
@@ -80,7 +79,6 @@ async def signaling_ws(websocket: WebSocket, camera_id: int):
     sdp     = init.get("sdp")
     typ     = init.get("type")
     if not user_id or not sdp or typ != "offer":
-        # mal formato
         await websocket.close(code=4002)
         return
     
@@ -94,7 +92,6 @@ async def signaling_ws(websocket: WebSocket, camera_id: int):
     )
     pc.addTrack(video_track)
 
-    # 4) Maneja la SDP offer inicial
     try:
         await pc.setRemoteDescription(RTCSessionDescription(sdp=sdp, type=typ))
         answer = await pc.createAnswer()
@@ -108,7 +105,6 @@ async def signaling_ws(websocket: WebSocket, camera_id: int):
         await websocket.close(code=1011)
         return
 
-    # ⇢ 1. Reenvía tus propios ICE candidates al navegador
     @pc.on("icecandidate")
     async def on_icecandidate(event):
         if event.candidate:
@@ -117,20 +113,15 @@ async def signaling_ws(websocket: WebSocket, camera_id: int):
             except Exception as e:
                 print(f"Error sending ICE candidate: {e}")
 
-    # ⇢ 2. Handle msgs from front
     try:
         while True:
             try:
                 data = await websocket.receive_json()
 
-                # ── Detectar la señal de cierre del signaling-server ──
                 if isinstance(data, dict) and data.get("type") == "bye":
                     print(f"🔌 Received bye for camera {camera_id}, closing signaling loop")
-                    
-
                     break
 
-                # offer
                 if data.get("sdp") and data.get("type") == "offer":
                     try:
                         await pc.setRemoteDescription(
@@ -146,13 +137,11 @@ async def signaling_ws(websocket: WebSocket, camera_id: int):
                     except Exception as e:
                         print(f"Error handling SDP offer: {e}")
 
-                # remote candidate
                 elif data.get("candidate"):
                     cand = data["candidate"]
                     print(f"Received ICE candidate: {cand}")
 
                     try:
-                        # Crear objeto ICE candidate compatible con aiortc
                         ice_candidate = {
                             "candidate": cand["candidate"],
                             "sdpMid": cand.get("sdpMid", "0"),
@@ -165,7 +154,6 @@ async def signaling_ws(websocket: WebSocket, camera_id: int):
                     except Exception as e:
                         print(f"⚠️ Could not add ICE candidate (continuing anyway): {e}")
 
-                # bye
                 elif isinstance(data, str) and data.strip().lower() == "bye":
                     break
 
@@ -179,39 +167,15 @@ async def signaling_ws(websocket: WebSocket, camera_id: int):
         print(f"WebSocket error for camera {camera_id}: {e}")
     finally:
         print(f"🔌 Closing video track for camera {camera_id} finally")
-        # try:
-        #     if pc.connectionState != "closed":
-        #         print(f"🔌 Closing RTCPeerConnection for camera {camera_id}")
-        #         await pc.close()
-        #     if video_track:
-        #         print(f"🔌 Closing video track for camera {camera_id}")
-        #         await video_track.stop(camera_streams, camera_registry)
-        #     if websocket.client_state != WebSocketState.DISCONNECTED:
-        #         print(f"🔌 Closing WebSocket for camera {camera_id}")
-        #         await websocket.close()
-        # except Exception as e:
-        #     print(f"Error during cleanup for camera {camera_id}: {e}")
-        # print(f"🔌 WebSocket connection closed for camera {camera_id}")
 
-        # 1️⃣ Cerrar RTCPeerConnection
-        try:
-            print(f"🔌 Closing RTCPeerConnection for camera {camera_id}")
-            await pc.close()
-        except Exception as e:
-            print(f"Error closing RTCPeerConnection: {e}")
-
-        # 2️⃣ Detener VideoTrack (cierra inferencia y libera hilo)
         try:
             print(f"🔌 Stopping video track for camera {camera_id}")
             await video_track.stop(camera_streams, camera_registry)
         except Exception as e:
             print(f"Error stopping video track: {e}")
 
-        # 3️⃣ Cerrar WebSocket de señalización
         try:
-            print(f"🔌 Closing signaling WebSocket for camera {camera_id}")
-            await websocket.close()
+            print(f"🔌 Closing RTCPeerConnection for camera {camera_id}")
+            await pc.close()
         except Exception as e:
-            print(f"Error closing signaling WebSocket: {e}")
-
-        print(f"🔌 WebSocket connection closed for camera {camera_id}")
+            print(f"Error closing RTCPeerConnection: {e}")
