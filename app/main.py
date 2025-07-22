@@ -88,7 +88,8 @@ async def signaling_ws(websocket: WebSocket, camera_id: int):
         camera_streams,
         INFERENCE_SERVER_URL,
         user_id,
-        websocket
+        websocket,
+        camera_registry
     )
     pc.addTrack(video_track)
 
