@@ -171,7 +171,7 @@ async def signaling_ws(websocket: WebSocket, camera_id: int):
 
         try:
             print(f"🔌 Stopping video track for camera {camera_id}")
-            await video_track.stop(camera_streams, camera_registry)
+            video_track.stop()
         except Exception as e:
             print(f"Error stopping video track: {e}")
 

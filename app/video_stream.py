@@ -62,7 +62,7 @@ class CameraVideoTrack(VideoStreamTrack):
         self.shared_stream = shared_stream
         self.camera_id = camera_id
         self.user_id = user_id
-        self.inference_server_url = f'ws://{inference_server_url}/predict/{camera_id}'
+        self.inference_server_url = f'{inference_server_url}/{camera_id}'
         self.signal_ws = signal_ws
         camera_viewers[camera_id] += 1
         print(f"👤 Nuevo viewer para {camera_id}: {camera_viewers[camera_id]}")
