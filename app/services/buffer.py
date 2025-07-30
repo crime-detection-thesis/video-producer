@@ -1,7 +1,7 @@
 import asyncio, json, httpx
 from datetime import datetime
 from app.utils.hmac import make_hmac_headers
-from app.constants import UPLOAD_URL, INCIDENT_WINDOW
+from app.config import UPLOAD_URL, INCIDENT_WINDOW
 
 buffer_store: dict[tuple[str, str], list[dict]] = {}
 incident_tasks: dict[tuple[str, str], asyncio.Task] = {}

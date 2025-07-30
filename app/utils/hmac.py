@@ -2,7 +2,7 @@ import time
 import json
 import hmac
 import hashlib
-from app.constants import UPLOAD_SECRET
+from app.config import UPLOAD_SECRET
 
 def make_hmac_headers(payload: dict) -> dict:
     body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
