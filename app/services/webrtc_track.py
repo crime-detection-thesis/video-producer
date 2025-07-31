@@ -11,7 +11,7 @@ class CameraVideoTrack(VideoStreamTrack):
         super().__init__()
         self.camera_id = camera_id
         camera_viewers[camera_id] = camera_viewers.get(camera_id, 0) + 1
-        print(f"👤 Viewer joined camera {camera_id} — total: {camera_viewers[camera_id]}")
+        print(f"👤 Viewer joined camera {self.camera_id} — total: {camera_viewers[self.camera_id]}")
 
     async def recv(self) -> VideoFrame:
         pts, time_base = await self.next_timestamp()
