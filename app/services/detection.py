@@ -4,8 +4,8 @@ from typing import Any
 from app.inference.handler import InferenceClient
 
 class DetectionService:
-    def __init__(self, inference_url: str, user_id: int):
-        self.client = InferenceClient(inference_url, user_id)
+    def __init__(self, inference_url: str, camera_id: int):
+        self.client = InferenceClient(inference_url, camera_id)
 
     async def detect(self, frame: np.ndarray) -> dict[str, Any]:
         result = await self.client.send_frame(frame)
