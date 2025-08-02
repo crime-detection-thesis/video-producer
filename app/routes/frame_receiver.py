@@ -97,6 +97,8 @@ async def receive_camera_frames(websocket: WebSocket, camera_id: int):
             with contextlib.suppress(asyncio.CancelledError):
                 await task
 
+        await detection_services[camera_id].client.close()
+
         buffer.finished = True
         camera_buffers.pop(camera_id, None)
         detection_services.pop(camera_id, None)

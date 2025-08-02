@@ -12,7 +12,6 @@ class InferenceClient:
 
     async def connect(self):
         try:
-            print('🔌 Connecting to inference server...')
             self.websocket = await websockets.connect(f'{self.inference_url}/{self.user_id}')
             init_msg = json.dumps({"user_id": self.user_id})
             await self.websocket.send(init_msg)
