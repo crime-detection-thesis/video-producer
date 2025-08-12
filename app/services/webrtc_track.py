@@ -2,7 +2,6 @@ from aiortc import VideoStreamTrack
 from av import VideoFrame
 import asyncio
 from app.shared_state import camera_buffers, camera_user_map, camera_viewers
-from app.utils.gateway_control import stop_gateway_stream
 
 class CameraVideoTrack(VideoStreamTrack):
     def __init__(self, camera_id: int, user_id: str):
@@ -36,8 +35,6 @@ class CameraVideoTrack(VideoStreamTrack):
         if self.camera_id in camera_viewers:
             camera_viewers[self.camera_id] -= 1
             if camera_viewers[self.camera_id] <= 0:
-                print(f"🛑 No more viewers for camera {self.camera_id}, stopping stream...")
-                asyncio.create_task(stop_gateway_stream(self.camera_id))
                 if self.camera_id in camera_user_map:
                     del camera_user_map[self.camera_id]
                 del camera_viewers[self.camera_id]

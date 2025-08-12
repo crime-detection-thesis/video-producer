@@ -7,7 +7,7 @@ from app.services.webrtc_track import CameraVideoTrack
 from app.shared_state import signaling_websockets, camera_viewers
 from app.core.config import config, pcs
 from app.core.connection_state import ConnectionState
-from app.utils.gateway_control import stop_gateway_stream
+from app.utils.gateway_control import stop_gateway_stream_ws
 
 class WebRTCSignalingSession:
     def __init__(self, ws: WebSocket, camera_id: int):
@@ -18,7 +18,6 @@ class WebRTCSignalingSession:
         self.pc = None
 
     async def run(self):
-        print(f"🔌 Accepting WebSocket signaling for camera {self.camera_id}")
         await self.ws.accept()
         self.conn_state = self._init_connection()
         try:
@@ -47,6 +46,7 @@ class WebRTCSignalingSession:
         sdp, typ = init.get("sdp"), init.get("type")
         self.user_id = init.get("user_id", str(self.camera_id))
         self.conn_state.user_id = self.user_id
+        self.gateway_ws_url = init.get("video_gateway_ws_url")
 
         if not sdp or typ != "offer":
             print(f"❌ Invalid offer from camera {self.camera_id}")
@@ -136,8 +136,9 @@ class WebRTCSignalingSession:
                     del camera_viewers[self.camera_id]
                 print(f"🧹 Removed last WebSocket for camera {self.camera_id}")
                 try:
-                    print(f"🛑 No more viewers for camera {self.camera_id}, stopping gateway stream...")
-                    await stop_gateway_stream(self.camera_id)
+                    if hasattr(self, 'gateway_ws_url') and self.gateway_ws_url:
+                        print('Stopping gateway stream signaling_session...')
+                        await stop_gateway_stream_ws(self.camera_id, self.gateway_ws_url)
                 except Exception as e:
                     print(f"⚠️ Error stopping gateway stream for camera {self.camera_id}: {e}")
             else:
@@ -156,7 +157,7 @@ class WebRTCSignalingSession:
                         del camera_viewers[self.camera_id]
                 else:
                     camera_viewers[self.camera_id] = len(signaling_websockets[self.camera_id])
-        
+
         if hasattr(self.ws, 'close') and self.ws.client_state.value <= 2:
             try:
                 await self.ws.close()
