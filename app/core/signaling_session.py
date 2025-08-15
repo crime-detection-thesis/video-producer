@@ -55,6 +55,7 @@ class WebRTCSignalingSession:
 
         print(f"📡 Received WebRTC offer from camera {self.camera_id}, user {self.user_id}")
         self.pc = RTCPeerConnection(configuration=config)
+        print('self.pc', self.pc)
         pcs.add(self.pc)
         self.conn_state.pc = self.pc
         self.pc.addTrack(CameraVideoTrack(self.camera_id, self.user_id))
