@@ -1,0 +1,11 @@
+services:
+  video-producer:
+    container_name: video-producer
+    build:
+      context: .
+      dockerfile: prod.dockerfile
+    ports:
+      - "8001:8001"
+    env_file:
+      - .env
+    restart: always

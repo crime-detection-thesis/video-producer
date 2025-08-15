@@ -1,3 +1,4 @@
+# app/schemas/camera.py
 from pydantic import BaseModel
 
 class CameraConnectionRequest(BaseModel):
